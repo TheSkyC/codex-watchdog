@@ -1,5 +1,4 @@
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
-import { once } from "node:events";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -14,6 +13,7 @@ import {
   waitForHttpReady,
 } from "./launcher-support.mjs";
 import { createWatchdogProxy } from "./proxy.mjs";
+import { superviseStandardRuntime, terminateChild } from "./standard-runtime.mjs";
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_DELAYS_MS = [30_000, 60_000, 120_000, 300_000];
@@ -39,27 +39,6 @@ function createFileLogger(logPath) {
     warn: (message) => write("WARN", message),
     error: (message) => write("ERROR", message),
   };
-}
-
-function waitForExit(child) {
-  if (child.exitCode != null || child.signalCode != null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return once(child, "exit").then(([code, signal]) => ({ code, signal }));
-}
-
-async function terminateChild(child, signal = "SIGTERM") {
-  if (!child || child.exitCode != null || child.signalCode != null) return;
-  const exited = waitForExit(child);
-  child.kill(signal);
-  const graceful = await Promise.race([
-    exited.then(() => true),
-    new Promise((resolve) => setTimeout(() => resolve(false), 2_000)),
-  ]);
-  if (!graceful && child.exitCode == null && child.signalCode == null) {
-    child.kill("SIGKILL");
-    await waitForExit(child);
-  }
 }
 
 async function main() {
@@ -105,17 +84,17 @@ async function main() {
     );
     const appServerUrl = `ws://${host}:${appServerPort}`;
 
-    appServer = spawn(
-      process.execPath,
-      [codexEntrypoint, "app-server", "--listen", appServerUrl],
-      {
+    const startAppServer = () => {
+      const child = spawn(process.execPath, [codexEntrypoint, "app-server", "--listen", appServerUrl], {
         cwd: launchCwd,
         env: process.env,
         windowsHide: true,
         stdio: ["ignore", logger.fd, logger.fd],
-      },
-    );
-    appServer.once("error", (error) => logger.error(`Failed to start app-server: ${error.message}`));
+      });
+      child.once("error", (error) => logger.error(`Failed to start app-server: ${error.message}`));
+      return child;
+    };
+    appServer = startAppServer();
     await waitForHttpReady(`http://${host}:${appServerPort}/readyz`);
     logger.info(`Codex app-server ready at ${appServerUrl}`);
 
@@ -137,21 +116,22 @@ async function main() {
     });
     tui.once("error", (error) => logger.error(`Failed to start TUI: ${error.message}`));
 
-    const outcome = await Promise.race([
-      waitForExit(tui).then((result) => ({ type: "tui", ...result })),
-      waitForExit(appServer).then((result) => ({ type: "app-server", ...result })),
+    const outcome = await superviseStandardRuntime({
+      initialAppServer: appServer,
+      tui,
       signalPromise,
-    ]);
+      startAppServer,
+      waitForAppServerReady: (_child, options) => waitForHttpReady(
+        `http://${host}:${appServerPort}/readyz`,
+        options,
+      ),
+      logger,
+    });
 
-    if (outcome.type === "app-server") {
-      logger.error(`App-server exited unexpectedly with code ${outcome.code}`);
-      await terminateChild(tui);
-      process.exitCode = outcome.code ?? 1;
-    } else if (outcome.type === "signal") {
-      await terminateChild(tui, outcome.signal);
+    if (outcome.type === "signal") {
       process.exitCode = outcome.signal === "SIGINT" ? 130 : 143;
     } else {
-      process.exitCode = outcome.code ?? (outcome.signal ? 1 : 0);
+      process.exitCode = outcome.error ? 1 : outcome.code ?? (outcome.signal ? 1 : 0);
     }
   } finally {
     for (const [signal, handler] of signalHandlers) process.off(signal, handler);

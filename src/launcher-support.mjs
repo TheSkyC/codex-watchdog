@@ -108,16 +108,18 @@ function delay(ms) {
 
 export async function waitForHttpReady(
   url,
-  { timeoutMs = 15_000, intervalMs = 100, fetchImpl = fetch } = {},
+  { timeoutMs = 15_000, intervalMs = 100, fetchImpl = fetch, signal } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error(`Readiness probe for ${url} was cancelled`);
     try {
-      const response = await fetchImpl(url);
+      const response = await fetchImpl(url, { signal });
       if (response.ok) return;
       lastError = new Error(`readiness probe returned HTTP ${response.status}`);
     } catch (error) {
+      if (signal?.aborted) throw new Error(`Readiness probe for ${url} was cancelled`);
       lastError = error;
     }
     await delay(intervalMs);

@@ -15,6 +15,7 @@ Codex Goal Watchdog 是一个本地启动器，用来降低 Codex `/goal` 因短
 - 重试长时间没有恢复时，中断该 turn 一次，并在确认 goal 状态后继续运行。
 - 终态瞬时错误已经把 goal 置为 `blocked` 时，按退避时间重新激活同一个 goal。
 - 上下文窗口耗尽时，先压缩原 thread，再恢复同一个 goal。
+- 本地 app-server 异常退出时，在原地址按封顶退避重启，并保持当前 TUI 与 proxy 的连接。
 
 它不会绕过人工暂停、认证失败、用量限制、token budget、额度不足或已经完成的 goal。
 
@@ -113,6 +114,12 @@ Codex TUI -> watchdog WebSocket proxy -> Codex app-server -> provider
 收到 `active` 状态不足以证明 Codex 已经继续；只有新的 turn 真正开始，才会取消待执行
 的恢复。
 
+app-server WebSocket 断开后，普通模式会保留 TUI 连接，并在同一地址重启 app-server。
+代理只重放 `initialize` 和 `initialized` 握手；已经发送过的 turn、prompt、goal 或压缩
+请求不会自动重放。断线期间新发出的业务请求也不会排队到下一代 app-server；带 ID 的请求
+会收到明确的“未发送”错误。这样可以避免连接抖动直接拖着 Codex TUI 退出，也不会让 watchdog
+接管 session 或代替 Codex 的 `resume`。
+
 更完整的取舍和协议边界见
 [ADR-0001](docs/adr/0001-app-server-transient-goal-recovery.md)。
 
@@ -143,6 +150,9 @@ npm run test:live
 live test 会启动本机已安装的 Codex app-server，确认 WebSocket 初始化、
 `turn/interrupt` 和 `thread/compact/start` 方法仍然存在。它不会制造真实 provider 故障，
 也不会覆盖 `thread/goal/*` 和全部通知结构，因此不能单独作为版本兼容证明。
+
+`npm run test:cli` 还会打包并安装当前仓库，用 fake app-server 验证进程崩溃后能在原地址
+换代，TUI WebSocket 保持连接，并在重新握手后继续收发请求。
 
 ## 目录
 

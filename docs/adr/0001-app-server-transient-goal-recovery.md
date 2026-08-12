@@ -65,3 +65,21 @@ watchdog 在 Codex TUI 和 app-server 之间运行本地 WebSocket 代理，原�
 - Evidence: 新增组合回归测试先稳定失败；调整顺序后 npm test 通过 63/63，npm run test:live 与 npm run check 均退出 0
 - Consequence: 明确的 insufficient_quota、quota exhausted 等永久错误优先于结构化 HTTP 429，不会触发自动恢复
 - Reason decision still stands: 同一 provider 通知可能同时携带 HTTP 状态和业务错误文本，永久额度语义比通用限流状态更具体
+
+## Amendment - 2026-08-12 - 普通模式在本地 app-server 断线后保留 TUI transport
+
+- Decision: 普通 launcher 在 app-server 异常退出后使用原监听地址持续重启子进程。proxy
+  保留 TUI WebSocket，按封顶退避连接替换后的 app-server，并只重放 `initialize` 与
+  `initialized` 握手。已经发送过的业务 RPC 不重放，session 选择和 `resume` 仍由 Codex
+  负责。
+- Rejected: 让 app-server 退出直接终止 TUI 会把本地子进程故障升级成整个 Codex 退出；
+  自动重启 TUI 或调用 `resume` 会越过启动器边界；重放全部排队请求可能重复 turn、prompt、
+  goal 或 compact 副作用。
+- Evidence: 新增失败回归后，`npm test` 通过 70/70；`npm run check`、`npm run test:live`、
+  `git diff --check` 均退出 0。`npm run test:cli` 打包安装真实 CLI，第一代 fake app-server
+  以 17 退出后，原 TUI WebSocket 通过第二代 app-server 重新握手并成功完成后续请求。
+- Consequence: 普通模式可以承受本地 app-server 进程退出及其 WebSocket 10054/断开窗口，
+  但不会伪装业务 RPC 的 exactly-once。断线前已投递而未返回的请求仍属于不确定结果。
+  断线期间新收到的业务请求不会跨 app-server 代际排队；带 ID 的请求返回明确的未发送错误。
+  replacement 的异步 spawn failure 继续按封顶退避重试，TUI 或信号退出会取消退避与 readiness
+  探针。
