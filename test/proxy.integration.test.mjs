@@ -174,6 +174,43 @@ test("holds the TUI open while the initial app-server connection is retried", as
   assert.equal(upstream.received.filter((message) => message.method === "initialize").length, 1);
 });
 
+test("supports a second websocket for the Codex session picker", async (t) => {
+  const upstream = await startMockAppServer();
+  const proxy = await createWatchdogProxy({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    upstreamUrl: upstream.url,
+    delaysMs: [5],
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  const mainTui = new WebSocket(proxy.url);
+  const picker = new WebSocket(proxy.url);
+  t.after(async () => {
+    mainTui.terminate();
+    picker.terminate();
+    await proxy.close();
+    await upstream.close();
+  });
+
+  await Promise.all([waitForOpen(mainTui), waitForOpen(picker)]);
+  const mainReady = waitForMessage(mainTui, (message) => message.id === "main-init");
+  const pickerReady = waitForMessage(picker, (message) => message.id === "picker-init");
+  mainTui.send(JSON.stringify({
+    method: "initialize",
+    id: "main-init",
+    params: { clientInfo: { name: "test-main", title: "Test", version: "1" } },
+  }));
+  picker.send(JSON.stringify({
+    method: "initialize",
+    id: "picker-init",
+    params: { clientInfo: { name: "test-picker", title: "Test", version: "1" } },
+  }));
+
+  await Promise.all([mainReady, pickerReady]);
+  assert.equal(mainTui.readyState, WebSocket.OPEN);
+  assert.equal(picker.readyState, WebSocket.OPEN);
+});
+
 test("keeps the TUI connected while an established app-server websocket is replaced", async (t) => {
   const upstreamPort = await allocateTcpPort();
   let upstream = await startMockAppServer(upstreamPort);

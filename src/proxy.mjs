@@ -45,15 +45,10 @@ export async function createWatchdogProxy({
     response.end("not found\n");
   });
   const wss = new WebSocketServer({ server: httpServer });
-  let activeSession = null;
+  const sessions = new Set();
   let closing = false;
 
   wss.on("connection", (client) => {
-    if (activeSession) {
-      client.close(1013, "watchdog proxy already has an active TUI");
-      return;
-    }
-
     let upstream;
     let sessionClosed = false;
     let upstreamReady = false;
@@ -89,9 +84,10 @@ export async function createWatchdogProxy({
       rpc.close(reason);
       closeSocket(client, code, reason);
       closeSocket(upstream, code, reason);
-      if (activeSession?.client === client) activeSession = null;
+      sessions.delete(session);
     };
-    activeSession = { client, close: closeSession };
+    const session = { client, close: closeSession };
+    sessions.add(session);
 
     const scheduleInitialReconnect = () => {
       if (closing || sessionClosed || upstreamReady || reconnectTimer) return;
@@ -232,7 +228,7 @@ export async function createWatchdogProxy({
     url,
     async close() {
       closing = true;
-      activeSession?.close(1001, "watchdog proxy shutting down");
+      for (const session of sessions) session.close(1001, "watchdog proxy shutting down");
       for (const client of wss.clients) client.terminate();
       await new Promise((resolve) => wss.close(resolve));
       if (httpServer.listening) {
