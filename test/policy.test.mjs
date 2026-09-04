@@ -105,6 +105,21 @@ test("marks structured transient errors while Codex is still retrying", () => {
   });
 });
 
+test("retries the specific CC Switch reasoning-text proxy failure", () => {
+  const result = classifyTerminalError(
+    errorNotification({
+      info: "other",
+      message: "CC Switch local proxy failed while handling Codex endpoint /responses. Provider: Tarxf; model: deepseek-v4-flash; upstream_status: HTTP 400; cause: Error from provider (Console Go): Upstream request failed: [invalid_request_error] The `reasoning_text` in the thinking mode must be passed back to the API.",
+    }),
+  );
+
+  assert.deepEqual(result, {
+    transient: true,
+    reason: "cc-switch-reasoning-text-proxy-error",
+    statusCode: 400,
+  });
+});
+
 test("does not resume permanent, quota, or failed compaction requests", () => {
   const cases = [
     errorNotification({ info: "unauthorized", message: "401 unauthorized" }),

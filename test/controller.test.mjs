@@ -94,6 +94,22 @@ function terminal503() {
   };
 }
 
+function terminalCcSwitchReasoningText() {
+  return {
+    method: "error",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      willRetry: false,
+      error: {
+        message: "CC Switch local proxy failed while handling Codex endpoint /responses. Provider: Tarxf; model: deepseek-v4-flash; upstream_status: HTTP 400; cause: Error from provider (Console Go): Upstream request failed: [invalid_request_error] The `reasoning_text` in the thinking mode must be passed back to the API.",
+        codexErrorInfo: "other",
+        additionalDetails: null,
+      },
+    },
+  };
+}
+
 function retrying503() {
   const notification = terminal503();
   notification.params.willRetry = true;
@@ -150,6 +166,15 @@ test("correlates terminal error and blocked goal in either event order", () => {
     assert.equal(timers.length, 1);
     assert.equal(timers[0].delayMs, 30_000);
   }
+});
+
+test("schedules goal recovery for the specific CC Switch reasoning-text proxy failure", () => {
+  const { controller, timers } = createHarness();
+  controller.handleNotification(terminalCcSwitchReasoningText());
+  controller.handleNotification(blockedGoal());
+
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delayMs, 30_000);
 });
 
 test("checks the current goal before resuming", async () => {

@@ -10,6 +10,8 @@ const PERMANENT_MESSAGE_PATTERN =
   /\b(?:compact(?:ion)?|context window|usage limit|quota|credit.?exhaust|insufficient[_ -]?quota|unauthori[sz]ed|forbidden|bad request|invalid request|authentication)\b/i;
 const TRANSIENT_MESSAGE_PATTERN =
   /\b(?:service unavailable|bad gateway|gateway timeout|connection (?:reset|refused)|network (?:error|failure)|timed? out|stream (?:closed|disconnected))\b/i;
+const CC_SWITCH_REASONING_TEXT_PROXY_ERROR_PATTERN =
+  /cc switch local proxy failed.*(?:upstream_status:\s*http 400|\b400\b).*(?:reasoning_text|thinking mode).*must be passed back to the api/i;
 
 function result(transient, reason, statusCode = null, willRetry = false) {
   const classification = { transient, reason, statusCode };
@@ -63,6 +65,9 @@ export function classifyTerminalError(notification) {
     .join(" ");
   if (/ran out of room in the model'?s context window|context window exceeded/i.test(message)) {
     return compactRecovery();
+  }
+  if (CC_SWITCH_REASONING_TEXT_PROXY_ERROR_PATTERN.test(message)) {
+    return result(true, "cc-switch-reasoning-text-proxy-error", 400, willRetry);
   }
   if (PERMANENT_MESSAGE_PATTERN.test(message)) {
     return result(false, "permanent-error-message");
