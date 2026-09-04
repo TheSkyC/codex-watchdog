@@ -12,6 +12,8 @@ const TRANSIENT_MESSAGE_PATTERN =
   /\b(?:service unavailable|bad gateway|gateway timeout|connection (?:reset|refused)|network (?:error|failure)|timed? out|stream (?:closed|disconnected))\b/i;
 const CC_SWITCH_REASONING_TEXT_PROXY_ERROR_PATTERN =
   /cc switch local proxy failed.*(?:upstream_status:\s*http 400|\b400\b).*(?:reasoning_text|thinking mode).*must be passed back to the api/i;
+const CC_SWITCH_LOCAL_PROXY_ERROR_PATTERN =
+  /cc switch local proxy failed while handling codex endpoint \/responses\..*upstream_status:\s*http 400/i;
 
 function result(transient, reason, statusCode = null, willRetry = false) {
   const classification = { transient, reason, statusCode };
@@ -67,7 +69,16 @@ export function classifyTerminalError(notification) {
     return compactRecovery();
   }
   if (CC_SWITCH_REASONING_TEXT_PROXY_ERROR_PATTERN.test(message)) {
-    return result(true, "cc-switch-reasoning-text-proxy-error", 400, willRetry);
+    return {
+      ...result(true, "cc-switch-reasoning-text-proxy-error", 400, willRetry),
+      resumeActiveGoal: true,
+    };
+  }
+  if (CC_SWITCH_LOCAL_PROXY_ERROR_PATTERN.test(message)) {
+    return {
+      ...result(true, "cc-switch-local-proxy-error", 400, willRetry),
+      resumeActiveGoal: true,
+    };
   }
   if (PERMANENT_MESSAGE_PATTERN.test(message)) {
     return result(false, "permanent-error-message");

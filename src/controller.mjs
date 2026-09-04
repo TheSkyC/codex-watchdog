@@ -187,6 +187,12 @@ export class GoalWatchdogController {
       `Transient error for ${threadId}/${turnId}: ${classification.reason}`,
     );
 
+    if (classification.resumeActiveGoal === true) {
+      this.#cancelPending(state, "interrupt");
+      this.#scheduleResume(threadId, turnId, state, false);
+      return;
+    }
+
     if (classification.willRetry === true && state.blockedTurns.has(turnId)) {
       this.#scheduleIfCorrelated(threadId, turnId, state);
       return;

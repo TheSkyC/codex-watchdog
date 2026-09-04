@@ -117,6 +117,23 @@ test("retries the specific CC Switch reasoning-text proxy failure", () => {
     transient: true,
     reason: "cc-switch-reasoning-text-proxy-error",
     statusCode: 400,
+    resumeActiveGoal: true,
+  });
+});
+
+test("retries a CC Switch HTTP 400 when the model does not support web search", () => {
+  const result = classifyTerminalError(
+    errorNotification({
+      info: "other",
+      message: "CC Switch local proxy failed while handling Codex endpoint /responses. Provider: Tarxf; model: deepseek-v4-flash; upstream_status: HTTP 400; cause: The current model does not support web search.",
+    }),
+  );
+
+  assert.deepEqual(result, {
+    transient: true,
+    reason: "cc-switch-local-proxy-error",
+    statusCode: 400,
+    resumeActiveGoal: true,
   });
 });
 

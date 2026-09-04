@@ -94,7 +94,7 @@ function terminal503() {
   };
 }
 
-function terminalCcSwitchReasoningText() {
+function terminalCcSwitchReasoningText(message = "CC Switch local proxy failed while handling Codex endpoint /responses. Provider: Tarxf; model: deepseek-v4-flash; upstream_status: HTTP 400; cause: Error from provider (Console Go): Upstream request failed: [invalid_request_error] The `reasoning_text` in the thinking mode must be passed back to the API.") {
   return {
     method: "error",
     params: {
@@ -102,7 +102,7 @@ function terminalCcSwitchReasoningText() {
       turnId: "turn-1",
       willRetry: false,
       error: {
-        message: "CC Switch local proxy failed while handling Codex endpoint /responses. Provider: Tarxf; model: deepseek-v4-flash; upstream_status: HTTP 400; cause: Error from provider (Console Go): Upstream request failed: [invalid_request_error] The `reasoning_text` in the thinking mode must be passed back to the API.",
+        message,
         codexErrorInfo: "other",
         additionalDetails: null,
       },
@@ -166,6 +166,21 @@ test("correlates terminal error and blocked goal in either event order", () => {
     assert.equal(timers.length, 1);
     assert.equal(timers[0].delayMs, 30_000);
   }
+});
+
+test("retries a CC Switch proxy failure even when the goal remains active", async () => {
+  const { controller, timers, requests } = createHarness({ goalStatus: "active" });
+  controller.handleNotification(terminalCcSwitchReasoningText(
+    "CC Switch local proxy failed while handling Codex endpoint /responses. Provider: Tarxf; model: deepseek-v4-flash; upstream_status: HTTP 400; cause: The current model does not support web search.",
+  ));
+
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delayMs, 30_000);
+  await timers[0].callback();
+  assert.deepEqual(requests, [
+    { method: "thread/goal/get", params: { threadId: "thread-1" } },
+    { method: "thread/goal/set", params: { threadId: "thread-1", status: "active" } },
+  ]);
 });
 
 test("schedules goal recovery for the specific CC Switch reasoning-text proxy failure", () => {
