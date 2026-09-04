@@ -168,8 +168,8 @@ test("correlates terminal error and blocked goal in either event order", () => {
   }
 });
 
-test("retries a CC Switch proxy failure even when the goal remains active", async () => {
-  const { controller, timers, requests } = createHarness({ goalStatus: "active" });
+test("restarts and verifies a CC Switch recovery when the goal remains active", async () => {
+  const { controller, timers, requests, logs } = createHarness({ goalStatus: "active" });
   controller.handleNotification(terminalCcSwitchReasoningText(
     "CC Switch local proxy failed while handling Codex endpoint /responses. Provider: Tarxf; model: deepseek-v4-flash; upstream_status: HTTP 400; cause: The current model does not support web search.",
   ));
@@ -179,8 +179,52 @@ test("retries a CC Switch proxy failure even when the goal remains active", asyn
   await timers[0].callback();
   assert.deepEqual(requests, [
     { method: "thread/goal/get", params: { threadId: "thread-1" } },
+    { method: "thread/goal/set", params: { threadId: "thread-1", status: "blocked" } },
     { method: "thread/goal/set", params: { threadId: "thread-1", status: "active" } },
   ]);
+  assert.equal(timers[1].delayMs, 60_000);
+  assert.equal(
+    logs.some(({ message }) => message.includes("waiting 60000ms for a replacement turn")),
+    true,
+  );
+});
+
+test("retries a CC Switch recovery when no replacement turn begins", async () => {
+  const { controller, timers, requests, logs } = createHarness({ goalStatus: "active" });
+  controller.handleNotification(terminalCcSwitchReasoningText());
+  await timers[0].callback();
+  await timers[1].callback();
+
+  assert.deepEqual(requests.map(({ method }) => method), [
+    "thread/goal/get",
+    "thread/goal/set",
+    "thread/goal/set",
+    "thread/goal/get",
+    "thread/goal/set",
+    "thread/goal/set",
+  ]);
+  assert.equal(timers[2].delayMs, 120_000);
+  assert.equal(
+    logs.some(({ message }) => message.includes("did not start a replacement turn")),
+    true,
+  );
+});
+
+test("accepts a replacement turn after a CC Switch recovery", async () => {
+  const { controller, timers, cancelled } = createHarness({ goalStatus: "active" });
+  controller.handleNotification(terminalCcSwitchReasoningText());
+  await timers[0].callback();
+  const confirmationTimer = timers[1];
+  controller.handleNotification({
+    method: "turn/started",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "turn-2", status: "inProgress" },
+    },
+  });
+
+  assert.equal(confirmationTimer.cancelled, true);
+  assert.equal(cancelled.includes(confirmationTimer), true);
 });
 
 test("schedules goal recovery for the specific CC Switch reasoning-text proxy failure", () => {

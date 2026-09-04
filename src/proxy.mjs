@@ -22,19 +22,21 @@ function closeSocket(socket, code = 1000, reason = "closing") {
   }
 }
 
-function addWorkingDirectoryToThreadList(message, isBinary, workingDirectory) {
+function addWorkingDirectoryToThreadList(message, isBinary, workingDirectory, scopeDefault) {
   if (
     isBinary ||
     !workingDirectory ||
+    !scopeDefault ||
     message?.method !== "thread/list" ||
-    message.params === null ||
-    (typeof message.params === "object" && Object.hasOwn(message.params, "cwd"))
+    message.params === null
   ) {
     return null;
   }
   if (message.params !== undefined && (typeof message.params !== "object" || Array.isArray(message.params))) {
     return null;
   }
+  const cwd = message.params?.cwd;
+  if (cwd !== undefined && cwd !== null) return null;
   return JSON.stringify({
     ...message,
     params: { ...(message.params ?? {}), cwd: workingDirectory },
@@ -80,6 +82,7 @@ export async function createWatchdogProxy({
     let reconnecting = false;
     let connectAttempt = 0;
     let reconnectTimer = null;
+    let hasScopedInitialThreadList = false;
     let controller;
     const rpc = new RpcChannel({
       send(message) {
@@ -207,7 +210,9 @@ export async function createWatchdogProxy({
         message,
         isBinary,
         workingDirectory,
+        !hasScopedInitialThreadList,
       );
+      if (message?.method === "thread/list") hasScopedInitialThreadList = true;
       if (upstreamReady && upstream?.readyState === WebSocket.OPEN) {
         upstream.send(dataWithWorkingDirectory ?? data, { binary: isBinary });
       } else if (message?.method !== "initialize" && message?.id !== undefined && client.readyState === WebSocket.OPEN) {

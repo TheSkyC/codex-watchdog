@@ -6,6 +6,7 @@ import {
   allocateDistinctTcpPorts,
   allocateTcpPort,
   ensureWorkingDirectoryArg,
+  resolveWorkingDirectory,
   parseNonNegativeMilliseconds,
   resolveCodexEntrypoint,
   validateForwardedArgs,
@@ -112,6 +113,25 @@ test("rejects a second remote endpoint that would bypass the watchdog", () => {
   assert.doesNotThrow(() => validateForwardedArgs(["--", "--remote"]));
   assert.throws(() => validateForwardedArgs(["--remote", "ws://elsewhere"]), /--remote/);
   assert.throws(() => validateForwardedArgs(["--remote=ws:\/\/elsewhere"]), /--remote/);
+});
+
+test("resolves the effective directory from Codex -C and --cd options", () => {
+  assert.equal(
+    resolveWorkingDirectory(["-C", "C:\\work\\repo"], "C:\\launch"),
+    "C:\\work\\repo",
+  );
+  assert.equal(
+    resolveWorkingDirectory(["--cd=relative-repo"], "C:\\launch"),
+    path.join("C:\\launch", "relative-repo"),
+  );
+  assert.equal(
+    resolveWorkingDirectory(["-Cfirst", "--cd", "second"], "C:\\launch"),
+    path.join("C:\\launch", "second"),
+  );
+  assert.equal(
+    resolveWorkingDirectory(["--", "--cd", "other"], "C:\\launch"),
+    "C:\\launch",
+  );
 });
 
 test("adds the current directory for remote TUI launches", () => {

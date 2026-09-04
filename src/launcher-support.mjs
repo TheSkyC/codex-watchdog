@@ -93,6 +93,27 @@ export function ensureWorkingDirectoryArg(args, cwd) {
   return hasExplicitCwd ? args : ["-C", cwd, ...args];
 }
 
+export function resolveWorkingDirectory(args, cwd) {
+  const options = argsBeforeOptionDelimiter(args);
+  let selected = cwd;
+  for (let index = 0; index < options.length; index += 1) {
+    const arg = options[index];
+    if (arg === "-C" || arg === "--cd") {
+      if (options[index + 1] !== undefined) {
+        selected = options[index + 1];
+        index += 1;
+      }
+      continue;
+    }
+    if (/^-C.+/.test(arg)) {
+      selected = arg.slice(2);
+      continue;
+    }
+    if (arg.startsWith("--cd=")) selected = arg.slice("--cd=".length);
+  }
+  return path.resolve(cwd, selected);
+}
+
 export function parseNonNegativeMilliseconds(value, defaultValue, variableName) {
   if (!value) return defaultValue;
   const parsed = Number(value);

@@ -208,6 +208,46 @@ test("applies the launch directory to an unscoped session-picker thread list", a
   );
 });
 
+test("scopes only the session picker default when it sends a null CWD", async (t) => {
+  const upstream = await startMockAppServer();
+  const proxy = await createWatchdogProxy({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    upstreamUrl: upstream.url,
+    workingDirectory: "C:/work/project",
+    delaysMs: [5],
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  const tui = new WebSocket(proxy.url);
+  t.after(async () => {
+    tui.terminate();
+    await proxy.close();
+    await upstream.close();
+  });
+
+  await waitForOpen(tui);
+  const initialized = waitForMessage(tui, (message) => message.id === "null-cwd-init");
+  tui.send(JSON.stringify({
+    method: "initialize",
+    id: "null-cwd-init",
+    params: { clientInfo: { name: "test", title: "Test", version: "1" } },
+  }));
+  await initialized;
+  tui.send(JSON.stringify({ method: "thread/list", id: "default-list", params: { cwd: null } }));
+  await waitFor(() => upstream.received.some((message) => message.id === "default-list"));
+  assert.deepEqual(
+    upstream.received.find((message) => message.id === "default-list").params,
+    { cwd: "C:/work/project" },
+  );
+
+  tui.send(JSON.stringify({ method: "thread/list", id: "all-list", params: { cwd: null } }));
+  await waitFor(() => upstream.received.some((message) => message.id === "all-list"));
+  assert.deepEqual(
+    upstream.received.find((message) => message.id === "all-list").params,
+    { cwd: null },
+  );
+});
+
 test("supports a second websocket for the Codex session picker", async (t) => {
   const upstream = await startMockAppServer();
   const proxy = await createWatchdogProxy({

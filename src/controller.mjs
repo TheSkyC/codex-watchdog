@@ -189,7 +189,7 @@ export class GoalWatchdogController {
 
     if (classification.resumeActiveGoal === true) {
       this.#cancelPending(state, "interrupt");
-      this.#scheduleResume(threadId, turnId, state, false);
+      this.#scheduleResume(threadId, turnId, state, false, true);
       return;
     }
 
@@ -469,7 +469,7 @@ export class GoalWatchdogController {
     this.#scheduleResume(threadId, turnId, state, true);
   }
 
-  #scheduleResume(threadId, turnId, state, requireBlocked) {
+  #scheduleResume(threadId, turnId, state, requireBlocked, forceActiveGoalRestart = false) {
     if (state.pending) return;
 
     const delayIndex = Math.min(state.attempt, this.delaysMs.length - 1);
@@ -480,25 +480,35 @@ export class GoalWatchdogController {
       handle: null,
       cancelled: false,
       requireBlocked,
+      forceActiveGoalRestart,
       turnId,
     };
     pending.handle = this.schedule(async () => {
       if (pending.cancelled || state.pending !== pending) return;
-      await this.#resumeGoal(threadId, turnId, state, requireBlocked, pending);
+      await this.#resumeGoal(
+        threadId,
+        turnId,
+        state,
+        requireBlocked,
+        forceActiveGoalRestart,
+        pending,
+      );
     }, delayMs);
     state.pending = pending;
     if (requireBlocked) {
       this.logger.info(
         `Goal ${threadId} blocked by a transient error; resume in ${delayMs}ms`,
       );
+    } else if (forceActiveGoalRestart) {
+      this.logger.info(
+        `Goal ${threadId} remained active after a CC Switch error; recovery in ${delayMs}ms`,
+      );
     } else {
       this.logger.info(`Interrupted turn ${threadId}/${turnId}; resume in ${delayMs}ms`);
     }
   }
 
-  async #resumeGoal(threadId, turnId, state, requireBlocked, pending) {
-    let resumeSent = false;
-
+  async #resumeGoal(threadId, turnId, state, requireBlocked, forceActiveGoalRestart, pending) {
     try {
       const response = await this.sendRequest("thread/goal/get", { threadId });
       if (!this.#isCurrentPending(threadId, state, pending)) return;
@@ -513,26 +523,40 @@ export class GoalWatchdogController {
         : RESUMABLE_GOAL_STATUSES.has(status);
       if (!canResume) {
         this.#releasePending(state, pending);
+        if (forceActiveGoalRestart && status == null) {
+          state.attempt += 1;
+          this.logger.warn(
+            `Goal ${threadId} was unavailable after a CC Switch error; retrying recovery`,
+          );
+          this.#scheduleResume(threadId, turnId, state, requireBlocked, forceActiveGoalRestart);
+          return;
+        }
         this.logger.info(
           `Goal ${threadId} is ${status ?? "unknown"}; automatic resume skipped`,
         );
         return;
       }
 
-      this.#releasePending(state, pending);
-      resumeSent = true;
+      pending.kind = "resume-request";
+      if (forceActiveGoalRestart && status === "active") {
+        await this.sendRequest("thread/goal/set", { threadId, status: "blocked" });
+        if (!this.#isCurrentPending(threadId, state, pending)) return;
+      }
       await this.sendRequest("thread/goal/set", { threadId, status: "active" });
-      if (this.threads.get(threadId) !== state) return;
+      if (!this.#isCurrentPending(threadId, state, pending)) return;
       state.attempt += 1;
       state.transientTurns.delete(turnId);
       state.blockedTurns.delete(turnId);
       state.interruptAttempts.delete(turnId);
-      this.logger.info(`Goal ${threadId} resumed automatically`);
-    } catch (error) {
-      if (!resumeSent) {
-        if (!this.#isCurrentPending(threadId, state, pending)) return;
+      if (!forceActiveGoalRestart) {
         this.#releasePending(state, pending);
+        this.logger.info(`Goal ${threadId} resumed automatically`);
+        return;
       }
+      this.#waitForReplacementTurn(threadId, turnId, state, requireBlocked, pending);
+    } catch (error) {
+      if (!this.#isCurrentPending(threadId, state, pending)) return;
+      this.#releasePending(state, pending);
       this.logger.error(`Failed to resume goal ${threadId}: ${error.message}`);
       if (this.threads.get(threadId) !== state) return;
       if (state.activeTurnId && state.activeTurnId !== turnId) return;
@@ -547,8 +571,32 @@ export class GoalWatchdogController {
       state.attempt += 1;
       state.transientTurns.set(turnId, { transient: true, reason: "resume-rpc-failed" });
       state.blockedTurns.add(turnId);
-      this.#scheduleResume(threadId, turnId, state, requireBlocked);
+      this.#scheduleResume(threadId, turnId, state, requireBlocked, forceActiveGoalRestart);
     }
+  }
+
+  #waitForReplacementTurn(threadId, turnId, state, requireBlocked, pending) {
+    const delayIndex = Math.min(state.attempt, this.delaysMs.length - 1);
+    const delayMs = this.delaysMs[delayIndex];
+    pending.kind = "resume-confirm";
+    pending.handle = this.schedule(async () => {
+      if (!this.#isCurrentPending(threadId, state, pending)) return;
+      this.logger.warn(
+        `Goal ${threadId} did not start a replacement turn after CC Switch recovery; retrying`,
+      );
+      pending.kind = "resume";
+      await this.#resumeGoal(
+        threadId,
+        turnId,
+        state,
+        requireBlocked,
+        true,
+        pending,
+      );
+    }, delayMs);
+    this.logger.info(
+      `Goal ${threadId} was reset to active after a CC Switch error; waiting ${delayMs}ms for a replacement turn`,
+    );
   }
 
   #isCurrentPending(threadId, state, pending) {

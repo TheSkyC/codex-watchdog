@@ -7,6 +7,7 @@ import {
   allocateDistinctTcpPorts,
   allocateTcpPort,
   ensureWorkingDirectoryArg,
+  resolveWorkingDirectory,
   parseNonNegativeMilliseconds,
   resolveCodexEntrypoint,
   validateForwardedArgs,
@@ -77,6 +78,7 @@ async function main() {
     const forwardedArgs = process.argv.slice(2);
     validateForwardedArgs(forwardedArgs);
     const launchCwd = process.cwd();
+    const workingDirectory = resolveWorkingDirectory(forwardedArgs, launchCwd);
     const tuiArgs = ensureWorkingDirectoryArg(forwardedArgs, launchCwd);
     const [appServerPort, proxyPort] = await allocateDistinctTcpPorts(
       2,
@@ -86,7 +88,7 @@ async function main() {
 
     const startAppServer = () => {
       const child = spawn(process.execPath, [codexEntrypoint, "app-server", "--listen", appServerUrl], {
-        cwd: launchCwd,
+        cwd: workingDirectory,
         env: process.env,
         windowsHide: true,
         stdio: ["ignore", logger.fd, logger.fd],
@@ -102,7 +104,7 @@ async function main() {
       listenHost: host,
       listenPort: proxyPort,
       upstreamUrl: appServerUrl,
-      workingDirectory: launchCwd,
+      workingDirectory,
       delaysMs,
       interruptAfterMs,
       logger,
