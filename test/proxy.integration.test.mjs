@@ -174,6 +174,40 @@ test("holds the TUI open while the initial app-server connection is retried", as
   assert.equal(upstream.received.filter((message) => message.method === "initialize").length, 1);
 });
 
+test("applies the launch directory to an unscoped session-picker thread list", async (t) => {
+  const upstream = await startMockAppServer();
+  const proxy = await createWatchdogProxy({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    upstreamUrl: upstream.url,
+    workingDirectory: "C:/work/project",
+    delaysMs: [5],
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  const tui = new WebSocket(proxy.url);
+  t.after(async () => {
+    tui.terminate();
+    await proxy.close();
+    await upstream.close();
+  });
+
+  await waitForOpen(tui);
+  const initialized = waitForMessage(tui, (message) => message.id === "cwd-init");
+  tui.send(JSON.stringify({
+    method: "initialize",
+    id: "cwd-init",
+    params: { clientInfo: { name: "test", title: "Test", version: "1" } },
+  }));
+  await initialized;
+  tui.send(JSON.stringify({ method: "thread/list", id: "cwd-list", params: { limit: 20 } }));
+
+  await waitFor(() => upstream.received.some((message) => message.id === "cwd-list"));
+  assert.deepEqual(
+    upstream.received.find((message) => message.id === "cwd-list").params,
+    { limit: 20, cwd: "C:/work/project" },
+  );
+});
+
 test("supports a second websocket for the Codex session picker", async (t) => {
   const upstream = await startMockAppServer();
   const proxy = await createWatchdogProxy({

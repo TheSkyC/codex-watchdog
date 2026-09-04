@@ -102,6 +102,7 @@ async function main() {
       listenHost: host,
       listenPort: proxyPort,
       upstreamUrl: appServerUrl,
+      workingDirectory: launchCwd,
       delaysMs,
       interruptAfterMs,
       logger,

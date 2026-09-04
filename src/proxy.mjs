@@ -22,10 +22,30 @@ function closeSocket(socket, code = 1000, reason = "closing") {
   }
 }
 
+function addWorkingDirectoryToThreadList(message, isBinary, workingDirectory) {
+  if (
+    isBinary ||
+    !workingDirectory ||
+    message?.method !== "thread/list" ||
+    message.params === null ||
+    (typeof message.params === "object" && Object.hasOwn(message.params, "cwd"))
+  ) {
+    return null;
+  }
+  if (message.params !== undefined && (typeof message.params !== "object" || Array.isArray(message.params))) {
+    return null;
+  }
+  return JSON.stringify({
+    ...message,
+    params: { ...(message.params ?? {}), cwd: workingDirectory },
+  });
+}
+
 export async function createWatchdogProxy({
   listenHost = "127.0.0.1",
   listenPort = 0,
   upstreamUrl,
+  workingDirectory = null,
   delaysMs,
   interruptAfterMs,
   upstreamConnectDelaysMs = [100, 250, 500, 1_000, 2_000, 5_000],
@@ -183,8 +203,13 @@ export async function createWatchdogProxy({
         }
         return;
       }
+      const dataWithWorkingDirectory = addWorkingDirectoryToThreadList(
+        message,
+        isBinary,
+        workingDirectory,
+      );
       if (upstreamReady && upstream?.readyState === WebSocket.OPEN) {
-        upstream.send(data, { binary: isBinary });
+        upstream.send(dataWithWorkingDirectory ?? data, { binary: isBinary });
       } else if (message?.method !== "initialize" && message?.id !== undefined && client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify({
           id: message.id,
